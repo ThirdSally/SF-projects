@@ -1,0 +1,114 @@
+WITH ticket_spec(flight_id, 
+                 fare_conditions, 
+                 ticket_quantity, 
+                 fare_amount, 
+                 avg_price) AS
+                
+ (SELECT tf.flight_id,
+         tf.fare_conditions,
+         count(tf.ticket_no) AS ticket_quantity,
+         sum(tf.amount) AS fare_amount,
+         avg(tf.amount) AS avg_price
+    FROM dst_project.ticket_flights AS tf
+        JOIN dst_project.flights AS f ON tf.flight_id = f.flight_id
+   WHERE f.departure_airport = 'AAQ'
+        AND (date_trunc('month', f.scheduled_departure) IN ('2017-01-01',
+                                                         '2017-02-01',
+                                                         '2017-12-01'))
+        AND f.status NOT IN ('Cancelled')
+GROUP BY tf.flight_id, tf.fare_conditions),
+            
+ticket_info(flight_id, 
+            class_1, 
+            ticket_quantity_business, 
+            amount_business, 
+            avg_price_business, 
+            class_2, 
+            ticket_quantity_economy, 
+            amount_economy, 
+            avg_price_economy) AS
+            
+ (SELECT ts1.flight_id ,
+         ts1.fare_conditions AS class_1 ,
+         ts1.ticket_quantity AS ticket_quantity_business ,
+         ts1.fare_amount AS amount_business ,
+         ts1.avg_price AS avg_price_business ,
+         ts2.fare_conditions AS class_2 ,
+         ts2.ticket_quantity AS ticket_quantity_economy ,
+         ts2.fare_amount AS amount_economy ,
+         ts2.avg_price AS avg_price_economy
+    FROM ticket_spec AS ts1
+        JOIN ticket_spec AS ts2 ON ts2.flight_id = ts1.flight_id
+            AND ts1.fare_conditions <> ts2.fare_conditions
+            AND ts1.fare_conditions = 'Business'),
+   
+coordinate_info(flight_id, 
+                departure_airport, 
+                departure_latitude, 
+                departure_longitude, 
+                arrival_airport, 
+                arrival_latitude, 
+                arrival_longitude) AS
+ (SELECT f.flight_id,
+         a1.airport_code AS departure_airport,
+         a1.latitude AS departure_latitude,
+         a1.longitude AS departure_longitude,
+         a2.airport_code AS arrival_airport,
+         a2.latitude AS arrival_latitude,
+         a2.longitude AS arrival_longitude
+    FROM dst_project.airports AS a1
+        JOIN dst_project.flights AS f ON f.departure_airport=a1.airport_code
+        JOIN dst_project.airports AS a2 ON f.arrival_airport=a2.airport_code
+   WHERE f.departure_airport = 'AAQ'
+        AND (date_trunc('month', f.scheduled_departure) IN ('2017-01-01',
+                                                         '2017-02-01',
+                                                         '2017-12-01'))
+        AND f.status NOT IN ('Cancelled')
+),
+
+seat_info(aircraft_code, 
+          business_seats, 
+          economy_seats) AS
+ (SELECT s1.aircraft_code, 
+        count(distinct s1.seat_no) AS business_seats, 
+        count(distinct s2.seat_no) AS economy_seats
+    FROM dst_project.seats s1
+        JOIN dst_project.seats s2 ON s1.aircraft_code = s2.aircraft_code
+            AND s1.fare_conditions <> s2.fare_conditions
+            AND s1.fare_conditions = 'Business'
+GROUP BY s1.aircraft_code)
+
+SELECT f.flight_id,
+       f.aircraft_code,
+       a.model,
+       a.range,
+       f.departure_airport,
+       c.departure_latitude,
+       c.departure_longitude,
+       f.arrival_airport,
+       c.arrival_latitude,
+       c.arrival_longitude,
+       f.scheduled_departure,
+       f.scheduled_arrival,
+       60*DATE_PART('hour', f.scheduled_arrival - f.scheduled_departure)+DATE_PART('minute', f.scheduled_arrival - f.scheduled_departure) AS flight_duration,
+       60*DATE_PART('hour', f.actual_arrival - f.scheduled_arrival)+DATE_PART('minute', f.actual_arrival - f.scheduled_arrival) AS arrival_delay,
+       t1.class_1,
+       t1.ticket_quantity_business,
+       t1.amount_business,
+       t1.avg_price_business,
+       t1.class_2,
+       t1.ticket_quantity_economy,
+       t1.amount_economy,
+       t1.avg_price_economy,
+       s.business_seats,
+       s.economy_seats
+  FROM dst_project.flights AS f
+      LEFT JOIN dst_project.aircrafts AS a ON f.aircraft_code=a.aircraft_code
+           JOIN coordinate_info AS c ON f.flight_id=c.flight_id
+           JOIN ticket_info AS t1 ON f.flight_id = t1.flight_id
+           JOIN seat_info AS s ON f.aircraft_code = s.aircraft_code
+ WHERE f.departure_airport = 'AAQ'
+     AND (date_trunc('month', f.scheduled_departure) IN ('2017-01-01', 
+                                                         '2017-02-01',
+                                                         '2017-12-01'))
+     AND f.status NOT IN ('Cancelled')
